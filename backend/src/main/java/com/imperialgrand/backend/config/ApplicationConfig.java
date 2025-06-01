@@ -1,7 +1,7 @@
 package com.imperialgrand.backend.config;
 
-import com.imperialgrand.backend.exception.EmailNotFoundException;
-import com.imperialgrand.backend.user.UserRepository;
+import com.imperialgrand.backend.user.exception.EmailNotFoundException;
+import com.imperialgrand.backend.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

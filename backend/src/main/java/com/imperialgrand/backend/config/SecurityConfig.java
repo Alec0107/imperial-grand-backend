@@ -33,7 +33,7 @@ public class SecurityConfig {
             http
                 .cors(cors -> cors.configurationSource(corsConfiguration()))
                 .csrf(csrf -> csrf.disable())
-                .authorizeHttpRequests(auth -> auth.requestMatchers("/api/v1/auth/register","/api/v1/auth/verify","/api/v1/auth/login","/api/v1/auth/resend-verification","/api/v1/test/publicHello").permitAll()
+                .authorizeHttpRequests(auth -> auth.requestMatchers("/api/v1/auth/register","/api/v1/auth/verify","/api/v1/auth/login","/api/v1/auth/resend-verification","/api/v1/auth/inbox-resend-verification","/api/v1/test/publicHello", "/api/v1/auth/detailsTest", "/api/v1/auth/forgot-password", "/api/v1/auth/reset-password").permitAll()
                                                    .anyRequest().authenticated())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authenticationProvider(authenticationProvider)
@@ -45,8 +45,9 @@ public class SecurityConfig {
 
     private CorsConfigurationSource corsConfiguration() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(List.of("http://localhost:63342"));
+        configuration.setAllowedOrigins(List.of("http://localhost:63342", "http://127.0.0.1:5500", "http://localhost:5500"));
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type"));
+        configuration.setExposedHeaders(List.of("Set-Cookie"));
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "PUT","OPTIONS","PATCH", "DELETE"));
         configuration.setAllowCredentials(true);
 

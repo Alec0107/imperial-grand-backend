@@ -1,13 +1,18 @@
 package com.imperialgrand.backend.auth;
 
-import com.imperialgrand.backend.dto.LoginRequest;
-import com.imperialgrand.backend.dto.RegisterRequest;
-import com.imperialgrand.backend.dto.ResetPasswordRequest;
-import com.imperialgrand.backend.responseWrapper.ApiResponse;
+import com.imperialgrand.backend.resetpassword.dto.UserEmailDto;
+import com.imperialgrand.backend.auth.dto.LoginRequest;
+import com.imperialgrand.backend.auth.dto.RegisterRequest;
+import com.imperialgrand.backend.resetpassword.dto.NewPasswordDto;
+import com.imperialgrand.backend.dto_response.SignUpResponse;
+import com.imperialgrand.backend.common.response.ApiResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.view.RedirectView;
 
 @RestController
 @RequestMapping("/api/v1/auth")
@@ -17,52 +22,94 @@ public class AuthController {
     private final AuthService authService;
 
     @PostMapping("/register")
-    public ResponseEntity<ApiResponse<String>> register(@RequestBody RegisterRequest registerRequest) {
-        ApiResponse<String> response = authService.register(registerRequest);
+    public ResponseEntity<ApiResponse<SignUpResponse>> register(@RequestBody RegisterRequest registerRequest) {
+        System.out.println(registerRequest.toString());
+        ApiResponse<SignUpResponse> response = authService.register(registerRequest);
         return ResponseEntity.ok(response);
     }
 
     // To verify user's email when clicking the email verification link in user's email inbox
     @GetMapping("/verify")
-    public ResponseEntity<String> verify(@RequestParam("token") String rawToken,
-                                         @RequestParam("id") Integer tokenId) {
+    public RedirectView verify(@RequestParam("token") String rawToken,
+                               @RequestParam("id") Integer tokenId) {
         authService.verifyEmailToken(rawToken, tokenId);
-        return ResponseEntity.ok("Email verified successfully!");
+        // redirect the user to the front end html page
+        return new RedirectView("http://127.0.0.1:5500/pages/user-inbox-email-response/email-success.html");
     }
 
     @PostMapping("/login")
     public ResponseEntity<ApiResponse<String>> login(@RequestBody LoginRequest loginRequest) {
         ApiResponse<String> response =  authService.login(loginRequest);
-        return ResponseEntity.ok(response);
-    }
+        String jwt = response.getData();
 
+        ResponseCookie jwtCookie = ResponseCookie.from("jwt", jwt)
+                .httpOnly(true)
+                .secure(false) // false for now (dev) true for (production)
+                .path("/")
+                .sameSite("None")
+                .maxAge(3600)
+                .build();
+
+        System.out.println("Set-Cookie: " + jwtCookie.toString());
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE, jwtCookie.toString())
+                .body(response);
+    }
 
     @PostMapping("/logout")
     public ResponseEntity<ApiResponse<String>> logout(HttpServletRequest request) {
-        ApiResponse<String> response = authService.logout(request);
+        ApiResponse<String> response = authService.logout(request); // body to send
+
         return ResponseEntity.ok(response);
     }
 
     @PostMapping("/resend-verification")
-    public ResponseEntity<ApiResponse<String>> resendVerification(@RequestParam("email") String userEmail) {
-        ApiResponse<String> response = authService.resendVerificationToken(userEmail);
+    public ResponseEntity<ApiResponse<SignUpResponse>> resendVerification(@RequestParam("email") String userEmail) {
+        ApiResponse<SignUpResponse> response = authService.resendVerificationToken(userEmail);
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/inbox-resend-verification")
+    public ResponseEntity<ApiResponse<SignUpResponse>>inboxResend(@RequestParam("tokenId") int tokenId) {
+        System.out.println(tokenId);
+        ApiResponse<SignUpResponse> response = authService.resendVerificationToken(tokenId);
         return ResponseEntity.ok(response);
     }
 
     @PostMapping("/forgot-password")
-    public void forgotPassword() {
-
+    public ResponseEntity<ApiResponse<String>> forgotPassword(@RequestBody UserEmailDto forgotPassword) {
+        ApiResponse<String> response =  authService.sendTokenLinkPasswordReset(forgotPassword.getEmail());
+        return ResponseEntity.ok(response);
     }
 
     @PostMapping("/reset-password")
-    public void resetPassword(@RequestBody ResetPasswordRequest resetPasswordRequest) {
-
+    public ResponseEntity<ApiResponse<String>> resetPassword(@RequestBody NewPasswordDto resetPasswordRequest) {
+      /**
+       *  TODO: use to receive user's new password and
+       *        the token generated by the server to compare
+       *        for resetting the password
+       * */
+        System.out.println(resetPasswordRequest.toString());
+        ApiResponse<String> response = authService.resetPassword(resetPasswordRequest);
+        return ResponseEntity.ok(response);
     }
 
     @GetMapping("/profile")
     public void getProfile() {
-
+        /**
+         * TODO: just to send user's basic data such as; name, email, etc..
+         *
+         * **/
     }
+
+
+    // TEST ENDPOINT FOR RECEIVING THE COOKIE
+//    @GetMapping("/detailsTest")
+//    public ResponseEntity<String> getUserDetails(@CookieValue("jwt") String token) {
+//        System.out.println("Received JWT: " + token);
+//        return ResponseEntity.ok("Received token: " + token);
+//    }
 
 
 }

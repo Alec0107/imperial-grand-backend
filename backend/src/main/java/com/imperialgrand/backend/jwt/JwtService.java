@@ -1,7 +1,9 @@
 package com.imperialgrand.backend.jwt;
 
-import com.imperialgrand.backend.exception.InvalidJwtTokenException;
-import com.imperialgrand.backend.user.User;
+import com.imperialgrand.backend.jwt.exception.InvalidJwtTokenException;
+import com.imperialgrand.backend.jwt.model.JwtToken;
+import com.imperialgrand.backend.jwt.repository.JwtTokenRepository;
+import com.imperialgrand.backend.user.model.User;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
@@ -13,7 +15,6 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.stereotype.Service;
 
 import java.security.Key;
-import java.time.LocalDateTime;
 import java.util.*;
 
 @Service

@@ -1,21 +1,36 @@
 package com.imperialgrand.backend.auth;
 
-import com.imperialgrand.backend.dto.LoginRequest;
-import com.imperialgrand.backend.dto.RegisterRequest;
-import com.imperialgrand.backend.email.EmailService;
-import com.imperialgrand.backend.email.EmailVerificationToken;
-import com.imperialgrand.backend.email.EmailVerificationTokenRepository;
-import com.imperialgrand.backend.exception.*;
+import com.imperialgrand.backend.auth.dto.LoginRequest;
+import com.imperialgrand.backend.auth.dto.RegisterRequest;
+import com.imperialgrand.backend.common.globalexception.CooldownException;
+import com.imperialgrand.backend.jwt.exception.InvalidJwtTokenException;
+import com.imperialgrand.backend.resetpassword.dto.NewPasswordDto;
+import com.imperialgrand.backend.dto_response.SignUpResponse;
+import com.imperialgrand.backend.email.utils.EmailSenderService;
+import com.imperialgrand.backend.email.model.EmailVerificationToken;
+import com.imperialgrand.backend.email.repository.EmailVerificationTokenRepository;
+import com.imperialgrand.backend.user.exception.EmailAlreadyUsedException;
+import com.imperialgrand.backend.email.exception.EmailAlreadyVerifiedException;
+import com.imperialgrand.backend.email.exception.EmailTokenException;
+import com.imperialgrand.backend.email.exception.EmailTokenExpiredException;
+import com.imperialgrand.backend.resetpassword.exception.InvalidResetPasswordTokenException;
+import com.imperialgrand.backend.resetpassword.exception.TokenExpiredException;
 import com.imperialgrand.backend.jwt.JwtService;
-import com.imperialgrand.backend.jwt.JwtToken;
-import com.imperialgrand.backend.jwt.JwtTokenRepository;
-import com.imperialgrand.backend.jwt.TokenType;
-import com.imperialgrand.backend.responseWrapper.ApiResponse;
-import com.imperialgrand.backend.user.Role;
-import com.imperialgrand.backend.user.User;
-import com.imperialgrand.backend.user.UserRepository;
-import com.imperialgrand.backend.email.EmailTokenGenerator;
-import com.imperialgrand.backend.utils.InputValidator;
+import com.imperialgrand.backend.jwt.model.JwtToken;
+import com.imperialgrand.backend.jwt.repository.JwtTokenRepository;
+import com.imperialgrand.backend.jwt.model.TokenType;
+import com.imperialgrand.backend.resetpassword.model.ResetPasswordToken;
+import com.imperialgrand.backend.resetpassword.repository.ResetPasswordTokenRepository;
+import com.imperialgrand.backend.common.response.ApiResponse;
+import com.imperialgrand.backend.user.exception.EmailNotFoundException;
+import com.imperialgrand.backend.user.exception.EmailNotVerifiedException;
+import com.imperialgrand.backend.user.model.Role;
+import com.imperialgrand.backend.user.model.User;
+import com.imperialgrand.backend.user.repository.UserRepository;
+import com.imperialgrand.backend.email.utils.EmailTokenGenerator;
+import com.imperialgrand.backend.common.utils.InputValidator;
+import com.imperialgrand.backend.common.utils.MaskUserEmail;
+import jakarta.persistence.EntityNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
@@ -23,9 +38,7 @@ import lombok.RequiredArgsConstructor;
 
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
-import org.springframework.security.authentication.DisabledException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -37,15 +50,16 @@ import java.util.Optional;
 public class AuthService {
 
     private final JwtService jwtService;
-    private final EmailService emailService;
+    private final EmailSenderService emailService;
     private final PasswordEncoder passwordEncoder;
     private final AuthenticationManager authenticationManager;
     private final UserRepository userRepository;
     private final JwtTokenRepository jwtTokenRepository;
     private final EmailVerificationTokenRepository emailVerificationTokenRepository;
+    private final ResetPasswordTokenRepository resetPasswordTokenRepository;
 
     // For registration
-    public ApiResponse<String> register(RegisterRequest registerRequest) {
+    public ApiResponse<SignUpResponse> register(RegisterRequest registerRequest) {
 
         Optional<User> user = userRepository.findByEmail(registerRequest.getEmail());
 
@@ -86,13 +100,19 @@ public class AuthService {
         String salt = EmailTokenGenerator.generateSalt();
 
         // generate token and save in db
-       EmailVerificationToken emailToken = emailVerificationTokenRepository.save(generateEmailToken(userData, token, salt));
+       EmailVerificationToken emailToken = generateEmailToken(userData, token, salt);
 
         // Send email verification link
         String message = emailService.sendSimpleEmailVerif(registerRequest, token, emailToken.getEmailTokenId());
 
+        var signUpResponse = SignUpResponse.builder()
+                .email(userData.getEmail())
+                .message(message)
+                .expiryTime(emailToken.getExpiryTime())
+                .build();
 
-        return new ApiResponse<>(message, "Registration successful.");
+
+        return new ApiResponse<>(signUpResponse, "Registration successful.");
     }
 
     private boolean missingFields(RegisterRequest reg) throws IllegalArgumentException {
@@ -110,35 +130,42 @@ public class AuthService {
 
     // Verifying email verification token
     public void verifyEmailToken(String rawToken, int tokenId){
-        EmailVerificationToken emailToken = emailVerificationTokenRepository.getReferenceById(tokenId);
+        // wrap with entitynotfoundexception if getrefbyid is not found it throws an exception !!!
+        try {
+            // Might return a proxy — exception only thrown on access!
+            EmailVerificationToken emailToken = emailVerificationTokenRepository.getReferenceById(tokenId);
+            emailToken.getSalt(); // Force initialization to trigger exception early
 
-        if(emailToken == null){
-            throw new EmailTokenNotFoundException("Email token not found");
+            String salt = emailToken.getSalt();
+            String hashedEmailToken = emailToken.getToken();
+            String rawTokenHashed = EmailTokenGenerator.hashToken(rawToken, salt);
+
+            if(emailToken.getUser().isEnabled()){
+                throw EmailTokenException.builder().status("verified").build();
+            }
+
+            // sends this to user and let user decide to whether resend an email verification
+            if(emailToken.getExpiryTime().isBefore(LocalDateTime.now())){
+                System.out.println("Email token expired");
+                throw EmailTokenExpiredException.builder().tokenId(tokenId).status("expired").build();
+            }
+
+            if(!hashedEmailToken.equals(rawTokenHashed)){
+                System.out.println("Email token mismatched");
+                throw EmailTokenException.builder().status("invalid").build();
+            }
+
+            emailToken.setUsed(true);
+            User user = emailToken.getUser();
+            user.setEnabled(true);
+
+            userRepository.save(user);
+            // emailVerificationTokenRepository.delete(emailToken);
+        } catch (EntityNotFoundException ex) {
+            throw EmailTokenException.builder().status("invalid").build();
         }
 
-        String salt = emailToken.getSalt();
-        String hashedEmailToken = emailToken.getToken();
-        String rawTokenHashed = EmailTokenGenerator.hashToken(rawToken, salt);
 
-        if(!hashedEmailToken.equals(rawTokenHashed)){
-            throw new IllegalArgumentException("Invalid email token");
-        }
-
-        if(emailToken.isUsed()){
-            throw new IllegalStateException("Token already used");
-        }
-
-        // sends this to user and let user decide to whether resend an email verification
-        if(emailToken.getExpiryTime().isBefore(LocalDateTime.now())){
-            throw new IllegalArgumentException("Token expired");
-        }
-
-        emailToken.setUsed(true);
-        User user = emailToken.getUser();
-        user.setEnabled(true);
-
-        userRepository.save(user);
-        emailVerificationTokenRepository.delete(emailToken);
     }
 
     public ApiResponse<String> login(LoginRequest loginRequest) {
@@ -151,7 +178,7 @@ public class AuthService {
         }
 
         if(user.get().isEnabled() == false) {
-            throw new EmailNotVerifiedException("Email not verified. Please verify your email before logging in.");
+            throw new EmailNotVerifiedException("Email is not verified.");
         }
 
         try{
@@ -165,9 +192,9 @@ public class AuthService {
             if(jwt.isEmpty() || jwt.get().isExpired() || jwt.get().isRevoked()) {
                 jwtToken = jwtService.generateToken(userObject);
                 saveJwtToken(jwtToken, userObject);
+            }else{
+                jwtToken = jwt.get().getToken();
             }
-
-            jwtToken = jwt.get().getToken();
 
         }catch(BadCredentialsException ex){
             throw new BadCredentialsException("Bad credentials", ex);
@@ -212,14 +239,11 @@ public class AuthService {
        return new ApiResponse<>("" ,"Logout successful.");
     }
 
-
-
-
-
     @Transactional
-    public ApiResponse<String> resendVerificationToken(String email) {
+    public ApiResponse<SignUpResponse> resendVerificationToken(String email) {
 
         LocalDateTime now = LocalDateTime.now();
+        LocalDateTime expiry;
 
         Optional<User> userOpt = userRepository.findByEmail(email);
         if(!userOpt.isPresent()) {
@@ -227,6 +251,10 @@ public class AuthService {
         }
 
         User user = userOpt.get();
+
+        if(user.isEnabled()){
+            throw new EmailAlreadyVerifiedException("Your email is already verified. Please log in.");
+        }
 
 
 
@@ -248,6 +276,7 @@ public class AuthService {
                 emailTokenToSend = emailToken.getPlainToken();
                 tokenId = emailToken.getEmailTokenId();
                 System.out.println("Token is not in db.. Generating new token..");
+                expiry = emailToken.getExpiryTime();
 
         }else {
             EmailVerificationToken token = tokenOp.get();
@@ -258,7 +287,7 @@ public class AuthService {
                 throw new CooldownException("Please wait before requesting another verification link. You can try again in 1 minute.");
             }
 
-                if(token.getExpiryTime().isBefore(LocalDateTime.now()) ) {
+            if(token.getExpiryTime().isBefore(LocalDateTime.now()) ) {
                     // Delete old token
                     emailVerificationTokenRepository.deleteByUser_userId(user.getUserId());
                     // Must be converted back to byte array in order to use for validation later
@@ -271,21 +300,63 @@ public class AuthService {
 
                     emailTokenToSend = emailToken.getPlainToken();
                     tokenId = emailToken.getEmailTokenId();
+                    expiry = emailToken.getExpiryTime();
                     System.out.println("Generating new token..");
-                }else{
+            }else{
                     emailTokenToSend = token.getPlainToken();
                     tokenId = token.getEmailTokenId();
+                    expiry = token.getExpiryTime();
                     System.out.println("Reusing Token..");
-                }
+            }
         }
 
 
         String message = emailService.resendSimpleEmailVerif(user, emailTokenToSend, tokenId);
-        return new ApiResponse<>(message, "New verification link was sent successfully.");
+
+        var signUpResponse = SignUpResponse.builder()
+                .email(email)
+                .message(message)
+                .expiryTime(expiry)
+                .build();
+
+        return new ApiResponse<>(signUpResponse, "New verification link was sent successfully.");
     }
 
+    // Another resend email verification link when user sends a request from inbox (gmail)
+    // using tokenId to get the user object reference
+    @Transactional
+    public ApiResponse<SignUpResponse> resendVerificationToken(int tokenId){
+       User user = null;
+        try{
+            EmailVerificationToken emailToken = emailVerificationTokenRepository.getReferenceById(tokenId);
+            user = emailToken.getUser();
+        }catch (EntityNotFoundException ex){
+            System.out.println(ex.getMessage());
+        }
 
+        if(user == null){
+            System.out.println("User not found");
+        }
 
+        // delete the previous/expired email verif token
+        emailVerificationTokenRepository.deleteByUser_userId(user.getUserId());
+
+        // generate a new one and send back to user's email inbox (link)
+        String tokenPlain = EmailTokenGenerator.generateRandomToken();
+        String salt = EmailTokenGenerator.generateSalt();
+
+        EmailVerificationToken newEmailToken = generateEmailToken(user, tokenPlain, salt);
+        String message = emailService.resendSimpleEmailVerif(user, newEmailToken.getPlainToken(), newEmailToken.getEmailTokenId());
+        // mask user's email
+        String maskedUserEmail = MaskUserEmail.maskUserEmail(user.getEmail());
+        var signUpResponse = SignUpResponse.builder()
+                .email(maskedUserEmail)
+                .message(message)
+                .expiryTime(newEmailToken.getExpiryTime())
+                .build();
+
+        return new ApiResponse<>(signUpResponse, "New verification link was sent successfully.");
+    }
 
     private EmailVerificationToken generateEmailToken(User userData, String token, String salt) {
         // Generate the HashToken which will be included in the URL
@@ -305,6 +376,102 @@ public class AuthService {
 
         return newToken;
     }
+
+    //
+    public ApiResponse<String> sendTokenLinkPasswordReset(String email){
+
+        User userObject = userRepository.findByEmail(email).orElse(null);
+        String emailLinkMsg = null;
+
+        if(userObject == null || !userObject.isEnabled()) {
+            System.out.println("User not found");
+            // if no user or email associated then just ignore. DO NOTHING.
+            emailLinkMsg = "If an account exists for this email, a password reset link has been sent.";
+        }else{
+            //1. init or get the user object
+
+
+                //2. generate a string token
+                String plainToken = EmailTokenGenerator.generateRandomToken();
+
+                //3. generate the salt
+                String salt = EmailTokenGenerator.generateSalt();
+
+                //4. generate a hashed token to compare later
+                String hashedToken = EmailTokenGenerator.hashToken(plainToken, salt);
+
+                //5. save the hashedToken and salt in db
+                ResetPasswordToken resetPasswordToken = ResetPasswordToken.builder()
+                        .token(hashedToken)
+                        .plainToken(plainToken)
+                        .salt(salt)
+                        .expiryTime(LocalDateTime.now().plusMinutes(10))
+                        .createdAt(LocalDateTime.now())
+                        .used(false)
+                        .user(userObject)
+                        .build();
+
+                resetPasswordTokenRepository.save(resetPasswordToken);
+                // 4. send and a link to user's email with the token
+                emailLinkMsg = emailService.sendResetPasswordEmail(email, userObject.getFirstName(), plainToken, resetPasswordToken.getResetTokenId());
+            }
+
+        // send a success response back to user
+        return new ApiResponse<>(emailLinkMsg, "Reset password link was sent successfully.");
+    }
+
+    @Transactional
+    public ApiResponse<String> resetPassword(NewPasswordDto resetPasswordRequest){
+        /**
+         * TODO: - invalid/missing token: Done
+         *       - token expired: Done
+         *       - reused token: Done
+         *       - weak password:
+         *       - confirm mismatch
+         *in**/
+
+        // 1. assign each attribute from resetPasswordRequest object
+        String incomingToken = resetPasswordRequest.getToken();
+        int tokenId = Integer.parseInt(resetPasswordRequest.getTokenId());
+        String newPassword = resetPasswordRequest.getNewPassword();
+
+        // 2. fetch the token using the tokenID
+        ResetPasswordToken tokenEntry = resetPasswordTokenRepository.findById(tokenId)
+                .orElseThrow(()-> new InvalidResetPasswordTokenException("Reset token not found."));
+
+        // 3. check if token is expired
+        if(tokenEntry.getExpiryTime().isBefore(LocalDateTime.now())){
+            throw new TokenExpiredException("Reset password token has expired.");
+        }
+
+        // 4. check if token is already use
+        if(tokenEntry.isUsed()){
+            throw new InvalidResetPasswordTokenException("Reset password token is used.");
+        }
+
+        // 5. fetch the user using tokenEntry userId
+        User user = tokenEntry.getUser();
+
+        // 6. Hash the incoming token and compare
+        String incomingHashedToken = EmailTokenGenerator.hashToken(incomingToken, tokenEntry.getSalt());
+        if(!incomingHashedToken.equals(tokenEntry.getToken())){
+            throw new InvalidResetPasswordTokenException("Invalid reset token.");
+        }
+
+        // 7. Validate Password
+        InputValidator.validatePassword(newPassword);
+
+        user.setPassword(passwordEncoder.encode(newPassword));
+        user.setUpdatedAt(LocalDateTime.now());
+        tokenEntry.setUsed(true);
+
+        userRepository.save(user);
+        resetPasswordTokenRepository.save(tokenEntry);
+
+        return new ApiResponse<>(null, "Password Reset Success.");
+    }
+
+
 }
 
 
