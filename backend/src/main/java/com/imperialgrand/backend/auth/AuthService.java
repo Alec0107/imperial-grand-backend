@@ -437,7 +437,7 @@ public class AuthService {
 
         // 2. fetch the token using the tokenID
         ResetPasswordToken tokenEntry = resetPasswordTokenRepository.findById(tokenId)
-                .orElseThrow(()-> new InvalidResetPasswordTokenException("Reset token not found."));
+                .orElseThrow(()-> new InvalidResetPasswordTokenException("Invalid reset token. Reset token not found."));
 
         // 3. check if token is expired
         if(tokenEntry.getExpiryTime().isBefore(LocalDateTime.now())){

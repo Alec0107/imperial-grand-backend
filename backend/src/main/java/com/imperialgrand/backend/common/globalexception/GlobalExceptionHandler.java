@@ -138,7 +138,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(TokenExpiredException.class)
     public ResponseEntity<ErrorResponse> handleTokenExpiredException(TokenExpiredException ex) {
         ErrorResponse errorResponse = new ErrorResponse(ex.getMessage(),
-                BAD_REQUEST,
+                "TOKEN_EXPIRED",
                 HttpStatus.BAD_REQUEST.value());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
     }
@@ -146,7 +146,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(InvalidResetPasswordTokenException.class)
     public ResponseEntity<ErrorResponse> handleInvalidResetPasswordTokenException(InvalidResetPasswordTokenException ex) {
         ErrorResponse errorResponse = new ErrorResponse(ex.getMessage(),
-                BAD_REQUEST,
+                "INVALID_RESET_TOKE",
                 HttpStatus.BAD_REQUEST.value());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
     }
