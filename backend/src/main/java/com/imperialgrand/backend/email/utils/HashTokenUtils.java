@@ -1,11 +1,12 @@
 package com.imperialgrand.backend.email.utils;
 
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.util.Base64;
 
-public class EmailTokenGenerator {
+public class HashTokenUtils {
 
 
     public static String generateRandomToken() {
@@ -34,5 +35,15 @@ public class EmailTokenGenerator {
         }
     }
 
+    public static String hashRefreshToken(String refreshToken, String salt) {
+        try{
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            digest.update(Base64.getUrlDecoder().decode(salt));
+            byte[] refreshHashBytes = digest.digest(refreshToken.getBytes(StandardCharsets.UTF_8));
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(refreshHashBytes);
+        }catch (NoSuchAlgorithmException ex){
+            throw new RuntimeException("SHA-256 Algorithm not available", ex);
+        }
+    }
 
 }

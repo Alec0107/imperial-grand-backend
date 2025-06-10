@@ -6,13 +6,21 @@ import com.imperialgrand.backend.auth.dto.RegisterRequest;
 import com.imperialgrand.backend.resetpassword.dto.NewPasswordDto;
 import com.imperialgrand.backend.dto_response.SignUpResponse;
 import com.imperialgrand.backend.common.response.ApiResponse;
+import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
+import org.apache.coyote.Response;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.view.RedirectView;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.logging.Logger;
 
 @RestController
 @RequestMapping("/api/v1/auth")
@@ -20,10 +28,11 @@ import org.springframework.web.servlet.view.RedirectView;
 public class AuthController {
 
     private final AuthService authService;
+    private final Logger logger = Logger.getLogger(AuthController.class.getName());
 
     @PostMapping("/register")
     public ResponseEntity<ApiResponse<SignUpResponse>> register(@RequestBody RegisterRequest registerRequest) {
-        System.out.println(registerRequest.toString());
+        logger.info("RESGISTER BODY: " + registerRequest.toString());
         ApiResponse<SignUpResponse> response = authService.register(registerRequest);
         return ResponseEntity.ok(response);
     }
@@ -37,24 +46,98 @@ public class AuthController {
         return new RedirectView("http://127.0.0.1:5500/pages/user-inbox-email-response/email-success.html");
     }
 
-    @PostMapping("/login")
-    public ResponseEntity<ApiResponse<String>> login(@RequestBody LoginRequest loginRequest) {
-        ApiResponse<String> response =  authService.login(loginRequest);
-        String jwt = response.getData();
 
-        ResponseCookie jwtCookie = ResponseCookie.from("jwt", jwt)
-                .httpOnly(true)
-                .secure(false) // false for now (dev) true for (production)
+
+    @PostMapping("/login")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> login(@RequestBody LoginRequest loginRequest) {
+        int accessMaxAge = 1 * 60; // 3 minutes for access token
+        int refreshmaxAge = loginRequest.isRememberMe() ? 5 * 60 : 3 * 60;
+        Map<String, Object> mapBody = new HashMap<>();
+        Map<String, Object> mapResponse = authService.login(loginRequest);
+        String accessToken = (String) mapResponse.get("access_token");
+        String refreshToken = (String) mapResponse.get("refresh_token");
+
+        ResponseCookie refresh = ResponseCookie.from("refresh-token", refreshToken)
+                .httpOnly(false)
+                .secure(false)
+                .sameSite("Lax")
                 .path("/")
-                .sameSite("None")
-                .maxAge(3600)
+                .maxAge(refreshmaxAge)
                 .build();
 
-        System.out.println("Set-Cookie: " + jwtCookie.toString());
+        ResponseCookie access = ResponseCookie.from("access-token", accessToken)
+                .httpOnly(false)
+                .secure(false)
+                .sameSite("Lax")
+                .path("/")
+                .maxAge(accessMaxAge)
+                .build();
+
+
+
+        mapBody.put("username", mapResponse.get("username"));
+        mapBody.put("role", mapResponse.get("role"));
+
+        ApiResponse<Map<String, Object>> apiResponse = new ApiResponse<>(mapBody, "Login Successful!");
 
         return ResponseEntity.ok()
-                .header(HttpHeaders.SET_COOKIE, jwtCookie.toString())
-                .body(response);
+                .header(HttpHeaders.SET_COOKIE, refresh.toString(), access.toString())
+                .body(apiResponse);
+    }
+
+
+    @PostMapping("/refresh-token")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> refresh(HttpServletRequest request) {
+        /**
+         *  TODO:
+         *       - add refresh rotation. If access token (AT) expired
+         *       use the refresh token (RT) to issue a new AT and RT
+         *
+         * **/
+
+        Cookie[] cookies = request.getCookies();
+        String incomingRefreshToken = null;
+
+        if(cookies != null) {
+            for (Cookie cookie : cookies) {
+                if(cookie.getName().equals("refresh-token")) {
+                    incomingRefreshToken = cookie.getValue();
+                    break;
+                }
+            }
+        }
+
+        Map<String, Object> mapBody = new HashMap<>();
+        Map<String, Object> mapResponse = authService.generateNewJwtToken(incomingRefreshToken);
+        String newAccessToken = (String) mapResponse.get("access_token");
+        String newRefreshToken = (String) mapResponse.get("refresh_token");
+        boolean rememberMe = (boolean) mapResponse.get("remember_me");
+        int accessMaxAge =  1 * 60; // 3 minutes for access token
+        int refreshMaxAge = rememberMe ? 5 * 60 : 3 * 60;
+        ResponseCookie newRefresh = ResponseCookie.from("refresh-token", newRefreshToken)
+                .httpOnly(false)
+                .secure(false)
+                .sameSite("Lax")
+                .path("/")
+                .maxAge(refreshMaxAge)
+                .build();
+
+        ResponseCookie newAccess = ResponseCookie.from("access-token", newAccessToken)
+                .httpOnly(false)
+                .secure(false)
+                .sameSite("Lax")
+                .path("/")
+                .maxAge(accessMaxAge)
+                .build();
+
+        mapBody.put("username", mapResponse.get("username"));
+        mapBody.put("role", mapResponse.get("role"));
+
+        ApiResponse<Map<String, Object>> apiResponse = new ApiResponse<>(mapBody, "Refresh Successful!");
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE, newRefresh.toString(), newAccess.toString())
+                .body(apiResponse);
     }
 
     @PostMapping("/logout")
@@ -83,6 +166,15 @@ public class AuthController {
         return ResponseEntity.ok(response);
     }
 
+
+    @GetMapping("/reset-password/validate")
+    public ResponseEntity<ApiResponse<String>> checkResetToken(@RequestParam("token") String token, @RequestParam("tokenId") int tokenId) {
+        // validate the token & tokenId
+        logger.info("Token: " + token + " " + tokenId);
+        ApiResponse<String> response = authService.checkResetToken(token, tokenId);
+        return ResponseEntity.ok(response);
+    }
+
     @PostMapping("/reset-password")
     public ResponseEntity<ApiResponse<String>> resetPassword(@RequestBody NewPasswordDto resetPasswordRequest) {
       /**
@@ -96,13 +188,44 @@ public class AuthController {
     }
 
     @GetMapping("/profile")
-    public void getProfile() {
+    public ResponseEntity<ApiResponse<String>> getProfile(HttpServletRequest request) {
+        Cookie[] cookies = request.getCookies();
+        String accessToken = null;
+        for (Cookie cookie : cookies) {
+            logger.info("PROFILE: " + cookie.getName() + " : " + cookie.getValue());
+            if (cookie.getName().equals("access-token")) {
+                accessToken = cookie.getValue();
+            }
+        }
+
+        String fullName = authService.getProfile(accessToken);
+
+        ApiResponse<String> apiResponse = new ApiResponse<>(fullName, "Profile");
+
+        return ResponseEntity.ok(apiResponse);
+
         /**
          * TODO: just to send user's basic data such as; name, email, etc..
          *
          * **/
     }
 
+
+
+
+
+
+
+
+
+
+
+
+    /**
+     * TODO:
+     *        - Add endpoint for checking the reset link token validity so whenever
+     *        the user clicks the reset link it shows the appropriate modal
+     * */
 
     // TEST ENDPOINT FOR RECEIVING THE COOKIE
 //    @GetMapping("/detailsTest")

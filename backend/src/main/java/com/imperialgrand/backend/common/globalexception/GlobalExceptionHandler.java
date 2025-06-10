@@ -3,6 +3,10 @@ package com.imperialgrand.backend.common.globalexception;
 import com.imperialgrand.backend.email.exception.EmailAlreadyVerifiedException;
 import com.imperialgrand.backend.email.exception.EmailTokenException;
 import com.imperialgrand.backend.email.exception.EmailTokenExpiredException;
+import com.imperialgrand.backend.jwt.exception.InvalidJwtTokenException;
+import com.imperialgrand.backend.jwt.exception.MissingRefreshTokenException;
+import com.imperialgrand.backend.jwt.exception.RefreshTokenExpiredException;
+import com.imperialgrand.backend.jwt.exception.WrongTypeTokenException;
 import com.imperialgrand.backend.resetpassword.exception.InvalidResetPasswordTokenException;
 import com.imperialgrand.backend.resetpassword.exception.TokenExpiredException;
 import com.imperialgrand.backend.common.response.ErrorResponse;
@@ -83,6 +87,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(EmailNotVerifiedException.class)
     public ResponseEntity<ErrorResponse> handleEmailNotVerifiedException(EmailNotVerifiedException ex) {
+        System.out.println("ERRRORRR::: " + ex.getMessage());
         ErrorResponse errorResponse = new ErrorResponse(
                 ex.getMessage(),
                 UNAUTHORIZED,
@@ -146,10 +151,45 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(InvalidResetPasswordTokenException.class)
     public ResponseEntity<ErrorResponse> handleInvalidResetPasswordTokenException(InvalidResetPasswordTokenException ex) {
         ErrorResponse errorResponse = new ErrorResponse(ex.getMessage(),
-                "INVALID_RESET_TOKE",
+                "INVALID_RESET_TOKEN",
                 HttpStatus.BAD_REQUEST.value());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
     }
 
+
+
+
+    // JWT TOKEN EXCEPTION
+    @ExceptionHandler(MissingRefreshTokenException.class)
+    public ResponseEntity<ErrorResponse> handleMissingRefreshToken(MissingRefreshTokenException ex) {
+        ErrorResponse errorResponse = new ErrorResponse(ex.getMessage(),
+                "MISSING_REFRESH_TOKEN",
+                HttpStatus.BAD_REQUEST.value());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+    }
+
+    @ExceptionHandler(WrongTypeTokenException.class)
+    public ResponseEntity<ErrorResponse> handleWrongTypeTokenException(WrongTypeTokenException ex) {
+        ErrorResponse errorResponse = new ErrorResponse(ex.getMessage(),
+                "WRONG_TYPE_JWT",
+                HttpStatus.BAD_REQUEST.value());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+    }
+
+    @ExceptionHandler(RefreshTokenExpiredException.class)
+    public ResponseEntity<ErrorResponse> handleRefreshTokenExpiredException(RefreshTokenExpiredException ex) {
+        ErrorResponse errorResponse = new ErrorResponse(ex.getMessage(),
+                "EXPIRED_REFRESH_TOKEN",
+                HttpStatus.BAD_REQUEST.value());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+    }
+
+    @ExceptionHandler(InvalidJwtTokenException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidJwtTokenException(InvalidJwtTokenException ex) {
+        ErrorResponse errorResponse = new ErrorResponse(ex.getMessage(),
+                "INVALID_JWT_TOKEN",
+                HttpStatus.BAD_REQUEST.value());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+    }
 
 }

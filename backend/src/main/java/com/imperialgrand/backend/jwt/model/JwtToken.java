@@ -24,9 +24,11 @@ public class JwtToken {
 
     @Column(length = 1000)
     private String token;
-    private String tokenTyp;
+    private String tokenType;
+    private String salt;
     private boolean expired;
     private boolean revoked;
+    private boolean rememberMe;
     private LocalDateTime issuedAt;
 
     @ManyToOne

@@ -32,6 +32,8 @@ public class User implements UserDetails {
     private String email;
     private String password;
     private String phoneNumber;
+
+    @Column(nullable = true)
     private LocalDate dob;
 
     @Enumerated(EnumType.STRING)
