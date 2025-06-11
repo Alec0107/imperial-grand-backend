@@ -4,6 +4,9 @@ import com.imperialgrand.backend.auth.dto.LoginRequest;
 import com.imperialgrand.backend.auth.dto.RegisterRequest;
 import com.imperialgrand.backend.auth.utils.FieldsNullChecker;
 import com.imperialgrand.backend.common.globalexception.CooldownException;
+import com.imperialgrand.backend.email.repository.EmailRepositoryService;
+
+import com.imperialgrand.backend.jwt.JwtRepositoryService;
 import com.imperialgrand.backend.jwt.exception.InvalidJwtTokenException;
 import com.imperialgrand.backend.jwt.exception.MissingRefreshTokenException;
 import com.imperialgrand.backend.jwt.exception.RefreshTokenExpiredException;
@@ -14,21 +17,21 @@ import com.imperialgrand.backend.dto_response.SignUpResponse;
 import com.imperialgrand.backend.email.utils.EmailSenderService;
 import com.imperialgrand.backend.email.model.EmailVerificationToken;
 import com.imperialgrand.backend.email.repository.EmailVerificationTokenRepository;
+import com.imperialgrand.backend.resetpassword.repository.ResetPasswordRepositoryService;
+import com.imperialgrand.backend.user.UserRepositoryService;
 import com.imperialgrand.backend.user.exception.EmailAlreadyUsedException;
 import com.imperialgrand.backend.email.exception.EmailAlreadyVerifiedException;
 import com.imperialgrand.backend.email.exception.EmailTokenException;
 import com.imperialgrand.backend.email.exception.EmailTokenExpiredException;
 import com.imperialgrand.backend.resetpassword.exception.InvalidResetPasswordTokenException;
 import com.imperialgrand.backend.resetpassword.exception.TokenExpiredException;
-import com.imperialgrand.backend.jwt.JwtService;
+import com.imperialgrand.backend.jwt.JwtGeneratorService;
 import com.imperialgrand.backend.jwt.model.JwtToken;
 import com.imperialgrand.backend.jwt.repository.JwtTokenRepository;
-import com.imperialgrand.backend.jwt.model.TokenType;
 import com.imperialgrand.backend.resetpassword.model.ResetPasswordToken;
 import com.imperialgrand.backend.resetpassword.repository.ResetPasswordTokenRepository;
 import com.imperialgrand.backend.common.response.ApiResponse;
 import com.imperialgrand.backend.user.exception.EmailNotFoundException;
-import com.imperialgrand.backend.user.exception.EmailNotVerifiedException;
 import com.imperialgrand.backend.user.model.Role;
 import com.imperialgrand.backend.user.model.User;
 import com.imperialgrand.backend.user.repository.UserRepository;
@@ -36,8 +39,6 @@ import com.imperialgrand.backend.email.utils.HashTokenUtils;
 import com.imperialgrand.backend.common.utils.InputValidator;
 import com.imperialgrand.backend.common.utils.MaskUserEmail;
 import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.ExpiredJwtException;
-import io.jsonwebtoken.Jwt;
 import io.jsonwebtoken.JwtException;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -61,37 +62,42 @@ import java.util.logging.Logger;
 @RequiredArgsConstructor
 public class AuthService {
 
-    private final JwtService jwtService;
+    private final JwtGeneratorService jwtGeneratorService;
     private final EmailSenderService emailService;
     private final PasswordEncoder passwordEncoder;
     private final AuthenticationManager authenticationManager;
-    private final UserRepository userRepository;
-    private final JwtTokenRepository jwtTokenRepository;
-    private final EmailVerificationTokenRepository emailVerificationTokenRepository;
-    private final ResetPasswordTokenRepository resetPasswordTokenRepository;
+
     private final Logger logger = Logger.getLogger(AuthService.class.getName());
+
+    private final JwtTokenRepository jwtTokenRepository;
+    private final JwtRepositoryService jwtRepositoryService;
+
+    private final UserRepository userRepositor;
+    private final UserRepositoryService userRepositoryService;
+
+    private final EmailVerificationTokenRepository emailVerificationTokenRepository;
+    private final EmailRepositoryService emailRepositoryService;
+
+    private final ResetPasswordTokenRepository resetPasswordTokenRepository;
+    private final ResetPasswordRepositoryService resetPasswordRepositoryService;
 
 
     // For registration
     public ApiResponse<SignUpResponse> register(RegisterRequest registerRequest) {
 
-        Optional<User> user = userRepository.findByEmail(registerRequest.getEmail());
+        String userEmail = registerRequest.getEmail();
 
-        // If email is already in use. Hence, throw an exception.
-        if(user.isPresent()) {
-            logger.warning("AUTHSERVICE: User already exists");
-            throw new EmailAlreadyUsedException("Email is already in use.");
-        }
+        // to check if user's email was not taken
+        userRepositoryService.isEmailAvailable(userEmail);
 
         // If any fields are missing then throw an exception.
-        if(FieldsNullChecker.missingFields(registerRequest) == true){
+        if(FieldsNullChecker.missingFields(registerRequest)){
             throw new IllegalArgumentException("Missing required fields.");
         }
 
         // Validate email and pass using RegEx
         InputValidator.validateEmail(registerRequest.getEmail());
         InputValidator.validatePassword(registerRequest.getPassword());
-
 
         // Saves user data into database
         var userData = User.builder()
@@ -106,19 +112,20 @@ public class AuthService {
                 .createdAt(LocalDateTime.now())
                 .build();
 
-        userRepository.save(userData);
+        userRepositoryService.saveUser(userData);
 
         // Must be converted back to byte array in order to use for validation later
         // Generate token for email verification link
-        String token = HashTokenUtils.generateRandomToken();
+        String plainToken = HashTokenUtils.generateRandomToken();
         // Generate salt for email verification link
         String salt = HashTokenUtils.generateSalt();
+        String hashedToken = HashTokenUtils.hashToken(plainToken, salt);
 
-        // generate token and save in db
-       EmailVerificationToken emailToken = generateEmailToken(userData, token, salt);
+        // hash the token and save in db
+       EmailVerificationToken emailToken = emailRepositoryService.saveEmailVerifToken(userData, hashedToken, plainToken, salt);
 
         // Send email verification link
-        String message = emailService.sendSimpleEmailVerif(registerRequest, token, emailToken.getEmailTokenId());
+        String message = emailService.sendSimpleEmailVerif(registerRequest, plainToken, emailToken.getEmailTokenId());
 
         var signUpResponse = SignUpResponse.builder()
                 .email(userData.getEmail())
@@ -135,24 +142,19 @@ public class AuthService {
         // wrap with entitynotfoundexception if getrefbyid is not found it throws an exception !!!
         try {
             // Might return a proxy — exception only thrown on access!
-            EmailVerificationToken emailToken = emailVerificationTokenRepository.getReferenceById(tokenId);
-            emailToken.getSalt(); // Force initialization to trigger exception early
-
+            EmailVerificationToken emailToken = emailRepositoryService.getEmailVerificationToken(tokenId);
             String salt = emailToken.getSalt();
             String hashedEmailToken = emailToken.getToken();
-            String rawTokenHashed = HashTokenUtils.hashToken(rawToken, salt);
+            String rawHashedToken = HashTokenUtils.hashToken(rawToken, salt);
 
             if(emailToken.getUser().isEnabled()){
                 throw EmailTokenException.builder().status("verified").build();
             }
 
             // sends this to user and let user decide to whether resend an email verification
-            if(emailToken.getExpiryTime().isBefore(LocalDateTime.now())){
-                System.out.println("Email token expired");
-                throw EmailTokenExpiredException.builder().tokenId(tokenId).status("expired").build();
-            }
+            emailRepositoryService.isEmailTokenExpired(emailToken.getExpiryTime(), tokenId);
 
-            if(!hashedEmailToken.equals(rawTokenHashed)){
+            if(!hashedEmailToken.equals(rawHashedToken)){
                 System.out.println("Email token mismatched");
                 throw EmailTokenException.builder().status("invalid").build();
             }
@@ -161,8 +163,7 @@ public class AuthService {
             User user = emailToken.getUser();
             user.setEnabled(true);
 
-            userRepository.save(user);
-            // emailVerificationTokenRepository.delete(emailToken);
+            userRepositoryService.saveUser(user);
         } catch (EntityNotFoundException ex) {
             throw EmailTokenException.builder().status("invalid").build();
         }
@@ -171,7 +172,7 @@ public class AuthService {
     }
 
 
-    public Map<String, Object> login(LoginRequest loginRequest) {
+    public Map<String, Object> login(LoginRequest loginRequest, String incomingDeviceId) {
         /**
          * TODO:
          *      - revoke and expired to true when log in so that if there are
@@ -179,69 +180,68 @@ public class AuthService {
          * */
 
         logger.info("AUTHSERVICE: " + loginRequest.toString());
+        String userEmail = loginRequest.getEmail();
+        boolean rememberMe = loginRequest.isRememberMe();
         String accessToken = null;
         String refreshToken = null;
-        Map<String, Object> mapResponse = new HashMap<>();
+        String deviceId = null;
 
-        User user = userRepository.findByEmail(loginRequest.getEmail())
-                .orElseThrow(()-> new EmailNotFoundException("Email not found"));
+        // fetch the user form db and verify
+        User user = userRepositoryService.getUserByEmail(userEmail);
+        userRepositoryService.isUserEnabled(user);
 
-        if(user.isEnabled() == false){
-            throw new EmailNotVerifiedException("Email is not verified");
+
+        if(incomingDeviceId != null) {
+            logger.info("DEVICE ID: " + deviceId);
+            JwtToken previousRefreshToken = jwtRepositoryService.getTokenByUserIdAndDeviceId(user.getUserId(), incomingDeviceId);
+            previousRefreshToken.setRevoked(true);
+            previousRefreshToken.setExpired(true);
+            jwtRepositoryService.saveOldToken(previousRefreshToken);
+            deviceId = incomingDeviceId;
+        }else{
+            logger.info("DEVICE ID is empty. First Login with this device.");
+            deviceId = UUID.randomUUID().toString();
         }
+
 
         try{
             authenticationManager.authenticate(
                     new UsernamePasswordAuthenticationToken(loginRequest.getEmail(), loginRequest.getPassword())
             );
 
-            if(loginRequest.isRememberMe()){
-                refreshToken = jwtService.generateToken(user, JwtExpiration.REFRESH_TOKEN_REMEMBER.getExpirationMillis(), "refresh_token");
-            }else{
-                refreshToken = jwtService.generateToken(user, JwtExpiration.REFRESH_TOKEN_DEFAULT.getExpirationMillis(), "refresh_token");
-            }
-            accessToken  = jwtService.generateToken(user, JwtExpiration.ACCESS_TOKEN.getExpirationMillis(), "access_token");
+
+            // generate refresh and access token
+            refreshToken = jwtGeneratorService.generateRefreshToken(user, rememberMe);
+            accessToken  = jwtGeneratorService.generateAccessToken(user);
+
+            // generate device-id
+            deviceId = UUID.randomUUID().toString();
 
             // hash the refresh token
             String salt = HashTokenUtils.generateSalt();
             String hashedRefreshToken = HashTokenUtils.hashRefreshToken(refreshToken, salt);
 
             // save salt and hashed refresh token
-            saveJwtToken(hashedRefreshToken, salt, user, loginRequest.isRememberMe());
+           jwtRepositoryService.saveNewToken(hashedRefreshToken, salt, user, deviceId, loginRequest.isRememberMe());
+
+            System.out.println("LOGIN TIME: " + new Date());
+            return helperResponseMap(user, accessToken, refreshToken, deviceId, loginRequest.isRememberMe());
 
         }catch (BadCredentialsException ex){
             throw new BadCredentialsException("Bad credentials" + ex.getMessage());
         }
+    }
 
+    private Map<String, Object> helperResponseMap(User user, String accessToken, String refreshToken, String deviceId, boolean rememberMe) {
+        Map<String, Object> mapResponse = new HashMap<>();
         mapResponse.put("username", user.getUsername());
         mapResponse.put("role", user.getRole());
         mapResponse.put("access_token", accessToken);
         mapResponse.put("refresh_token", refreshToken);
-
-        System.out.println("LOGIN TIME: " + new Date());
-
-
+        mapResponse.put("device_id", deviceId);
+        mapResponse.put("remember_me", rememberMe);
         return mapResponse;
     }
-
-
-    private void saveJwtToken(String jwtToken, String salt, User userObject, boolean RememberMe) {
-        // make an instance of jwtObject
-        JwtToken jwtTokenObject = JwtToken.builder()
-                .token(jwtToken)
-                .tokenType(TokenType.REFRESH_TOKEN.toString())
-                .salt(salt)
-                .expired(false)
-                .revoked(false)
-                .rememberMe(RememberMe)
-                .issuedAt(LocalDateTime.now())
-                .user(userObject)
-                .build();
-        // save jwt object in db
-        jwtTokenRepository.save(jwtTokenObject);
-    }
-
-
 
 
     public ApiResponse<String> logout(HttpServletRequest request) {
@@ -271,39 +271,30 @@ public class AuthService {
 
         LocalDateTime now = LocalDateTime.now();
         LocalDateTime expiry;
+        String emailTokenToSend = null;
+        int tokenId = 0;
 
-        Optional<User> userOpt = userRepository.findByEmail(email);
-        if(!userOpt.isPresent()) {
-            throw new EmailNotFoundException("Email not found");
-        }
-
-        User user = userOpt.get();
+        User user = userRepositoryService.getUserByEmail(email);
 
         if(user.isEnabled()){
             throw new EmailAlreadyVerifiedException("Your email is already verified. Please log in.");
         }
 
-
-        Optional<EmailVerificationToken> tokenOp = emailVerificationTokenRepository.findByUser_userId(user.getUserId());
-
-        String emailTokenToSend = null;
-        int tokenId = 0;
+        Optional<EmailVerificationToken> tokenOp = emailRepositoryService.getByUserId(user.getUserId());
 
         if(!tokenOp.isPresent()) {
-
-                // No token exists, generate a new one
+                System.out.println("Token is not in db.. Generating new token..");
                 // Must be converted back to byte array in order to use for validation later
                 // Generate token for email verification link
-                String tokenPlain = HashTokenUtils.generateRandomToken();
+                String plainToken = HashTokenUtils.generateRandomToken();
+                emailTokenToSend = plainToken;
                 // Generate salt for email verification link
                 String salt = HashTokenUtils.generateSalt();
+                String hashedToken = HashTokenUtils.hashToken(plainToken, salt);
 
-                EmailVerificationToken emailToken = generateEmailToken(user, tokenPlain, salt);
-                emailTokenToSend = emailToken.getPlainToken();
+                EmailVerificationToken emailToken = emailRepositoryService.saveEmailVerifToken(user, hashedToken, plainToken, salt);
                 tokenId = emailToken.getEmailTokenId();
-                System.out.println("Token is not in db.. Generating new token..");
                 expiry = emailToken.getExpiryTime();
-
         }else {
             EmailVerificationToken token = tokenOp.get();
 
@@ -314,25 +305,27 @@ public class AuthService {
             }
 
             if(token.getExpiryTime().isBefore(LocalDateTime.now()) ) {
+                      System.out.println("Old token is in db. Generating new token..");
                     // Delete old token
                     emailVerificationTokenRepository.deleteByUser_userId(user.getUserId());
                     // Must be converted back to byte array in order to use for validation later
                     // Generate token for email verification link
-                    String tokenPlain = HashTokenUtils.generateRandomToken();
+                    String plainToken = HashTokenUtils.generateRandomToken();
                     // Generate salt for email verification link
                     String salt = HashTokenUtils.generateSalt();
+                    String hashedToken = HashTokenUtils.hashToken(plainToken, salt);
 
-                    EmailVerificationToken emailToken = generateEmailToken(user, tokenPlain, salt);
+                    EmailVerificationToken emailToken = emailRepositoryService.saveEmailVerifToken(user, hashedToken ,plainToken, salt);
 
                     emailTokenToSend = emailToken.getPlainToken();
                     tokenId = emailToken.getEmailTokenId();
                     expiry = emailToken.getExpiryTime();
-                    System.out.println("Generating new token..");
+
             }else{
+                    System.out.println("Reusing Old token...");
                     emailTokenToSend = token.getPlainToken();
                     tokenId = token.getEmailTokenId();
                     expiry = token.getExpiryTime();
-                    System.out.println("Reusing Token..");
             }
         }
 
@@ -378,10 +371,11 @@ public class AuthService {
         emailVerificationTokenRepository.deleteByUser_userId(user.getUserId());
 
         // generate a new one and send back to user's email inbox (link)
-        String tokenPlain = HashTokenUtils.generateRandomToken();
+        String plainToken = HashTokenUtils.generateRandomToken();
         String salt = HashTokenUtils.generateSalt();
+        String hashedToken = HashTokenUtils.hashToken(plainToken, salt);
 
-        EmailVerificationToken newEmailToken = generateEmailToken(user, tokenPlain, salt);
+        EmailVerificationToken newEmailToken = emailRepositoryService.saveEmailVerifToken(user, hashedToken, plainToken, salt);
         String message = emailService.resendSimpleEmailVerif(user, newEmailToken.getPlainToken(), newEmailToken.getEmailTokenId());
         // mask user's email
         String maskedUserEmail = MaskUserEmail.maskUserEmail(user.getEmail());
@@ -394,29 +388,10 @@ public class AuthService {
         return new ApiResponse<>(signUpResponse, "New verification link was sent successfully.");
     }
 
-    private EmailVerificationToken generateEmailToken(User userData, String token, String salt) {
-        // Generate the HashToken which will be included in the URL
-        String hashedEmailToken = HashTokenUtils.hashToken(token, salt);
 
-        EmailVerificationToken newToken = EmailVerificationToken.builder()
-                .token(hashedEmailToken)
-                .plainToken(token)
-                .salt(salt)
-                .expiryTime(LocalDateTime.now().plusMinutes(1))
-                .createdAt(LocalDateTime.now())
-                .used(false)
-                .user(userData)
-                .build();
-
-        emailVerificationTokenRepository.save(newToken);
-
-        return newToken;
-    }
-
-    //
     public ApiResponse<String> sendTokenLinkPasswordReset(String email){
 
-        User userObject = userRepository.findByEmail(email).orElse(null);
+        User userObject = userRepositoryService.getUserByEmailForPassReset(email);
         String emailLinkMsg = null;
 
         if(userObject == null || !userObject.isEnabled()) {
@@ -451,7 +426,7 @@ public class AuthService {
                         .user(userObject)
                         .build();
 
-                resetPasswordTokenRepository.save(resetPasswordToken);
+                resetPasswordRepositoryService.saveResetPasswordToken(resetPasswordToken);
                 // 4. send and a link to user's email with the token
                 emailLinkMsg = emailService.sendResetPasswordEmail(email, userObject.getFirstName(), plainToken, resetPasswordToken.getResetTokenId());
             }
@@ -476,9 +451,7 @@ public class AuthService {
         String newPassword = resetPasswordRequest.getNewPassword();
 
         // 2. fetch the token using the tokenID
-        ResetPasswordToken tokenEntry = resetPasswordTokenRepository.findById(tokenId)
-                .orElseThrow(()-> new InvalidResetPasswordTokenException("Invalid reset token. Reset token not found."));
-
+        ResetPasswordToken tokenEntry = resetPasswordRepositoryService.getResetPasswordTokenById(tokenId);
         // 3. check if token is expired
         if(tokenEntry.getExpiryTime().isBefore(LocalDateTime.now())){
             throw new TokenExpiredException("Reset password token has expired.");
@@ -505,12 +478,11 @@ public class AuthService {
         user.setUpdatedAt(LocalDateTime.now());
         tokenEntry.setUsed(true);
 
-        userRepository.save(user);
-        resetPasswordTokenRepository.save(tokenEntry);
+        userRepositoryService.saveUser(user);
+        resetPasswordRepositoryService.saveResetPasswordToken(tokenEntry);
 
         return new ApiResponse<>(null, "Password Reset Success.");
     }
-
 
     /**
      * TODO:
@@ -518,8 +490,7 @@ public class AuthService {
      *       so it can show the correct modal when user clicks the email link from inbox
      * **/
     public ApiResponse<String> checkResetToken(String rawToken, int tokenId){
-        ResetPasswordToken resetPasswordToken = resetPasswordTokenRepository.findById(tokenId)
-                    .orElseThrow(()-> new InvalidResetPasswordTokenException("Invalid reset token. Reset token not found."));
+        ResetPasswordToken resetPasswordToken = resetPasswordRepositoryService.getResetPasswordTokenById(tokenId);
 
         String salt = resetPasswordToken.getSalt();
         String hashedResetToken = resetPasswordToken.getToken();
@@ -544,22 +515,16 @@ public class AuthService {
 
 
 
-    public String getProfile(String token){
-        String userEmail = jwtService.getUserEmail(token);
 
-        User user =  userRepository.findByEmail(userEmail).get();
-
-        String userFullName = user.getFirstName() + user.getLastName();
-
-        return userFullName;
-    }
 
 
 
     @Transactional
-    public Map<String, Object> generateNewJwtToken(String incomingRefreshToken){
+    public Map<String, Object> generateNewJwtToken(String incomingRefreshToken, String deviceId){
         logger.info("Processing refresh token generation request for user");
-        Map<String, Object> mapResponse = new HashMap<>();
+        logger.info("Refresh token: " + incomingRefreshToken);
+        logger.info("Device ID: " + deviceId);
+        User user = null;
 
         try{
             // check if token is present
@@ -567,8 +532,8 @@ public class AuthService {
                 throw new MissingRefreshTokenException("Refresh token is empty");
             }
             // check if token is refresh and is not tampered
-            Claims claims = jwtService.extractAllClaims(incomingRefreshToken);
-            if(!claims.get("type").equals("refresh_token")){
+            Claims claims = jwtGeneratorService.extractAllClaims(incomingRefreshToken); // might throw an exception
+            if(!claims.get("type").equals("refresh-token")){
                 throw new WrongTypeTokenException("Wrong type of jwt token.");
             }
 
@@ -579,18 +544,15 @@ public class AuthService {
 
             // fetch the user via email
             String userEmail = claims.getSubject();
-            User user = userRepository.findByEmail(userEmail)
-                    .orElseThrow(() -> new EmailNotFoundException("Email is not found."));
+            user = userRepositoryService.getUserByEmail(userEmail);
 
             /**
              * TODO:
              *        Alternative (more concise) make sure that only returns 1
              *        jwttoken from db or make it a lists and iterate
              * **/
-            JwtToken matchingToken = jwtTokenRepository
-                    .findByUserAndRevokedFalseAndExpiredFalse(user.getUserId())
-                    .orElseThrow(() -> new MissingRefreshTokenException("Refresh token not found."));
 
+            JwtToken matchingToken = jwtRepositoryService.getTokenByUserIdAndDeviceId(user.getUserId(), deviceId); // fetch matching token from db
             String salt = matchingToken.getSalt();
             String hashedRefreshTokenDb = matchingToken.getToken();
             String incomingHashedRefreshToken = HashTokenUtils.hashRefreshToken(incomingRefreshToken, salt);
@@ -602,37 +564,47 @@ public class AuthService {
             // revoke the matched token
             matchingToken.setExpired(true);
             matchingToken.setRevoked(true);
-            jwtTokenRepository.save(matchingToken);
+            jwtRepositoryService.saveOldToken(matchingToken);
 
             String newAccessToken = null;
             String newRefreshToken = null;
+            String previousDeviceId = matchingToken.getDeviceId();
 
-            if(matchingToken.isRememberMe()){
-                newRefreshToken = jwtService.generateToken(user, JwtExpiration.REFRESH_TOKEN_REMEMBER.getExpirationMillis(), "refresh_token");
-            }else{
-                newRefreshToken = jwtService.generateToken(user, JwtExpiration.REFRESH_TOKEN_DEFAULT.getExpirationMillis(), "refresh_token");
-            }
-            newAccessToken = jwtService.generateToken(user, JwtExpiration.ACCESS_TOKEN.getExpirationMillis(), "access_token");
+            newRefreshToken = jwtGeneratorService.generateRefreshToken(user, matchingToken.isRememberMe());
+            newAccessToken = jwtGeneratorService.generateAccessToken(user);
 
             String newSalt = HashTokenUtils.generateSalt();
             String newHashedRefreshToken = HashTokenUtils.hashRefreshToken(newRefreshToken, newSalt);
 
-            saveJwtToken(newHashedRefreshToken, newSalt, user, matchingToken.isRememberMe());
-
-            mapResponse.put("username", user.getUsername());
-            mapResponse.put("role", user.getRole());
-            mapResponse.put("access_token", newAccessToken);
-            mapResponse.put("refresh_token", newRefreshToken);
-            mapResponse.put("remember_me", matchingToken.isRememberMe());
+            jwtRepositoryService.saveNewToken(newHashedRefreshToken, newSalt, user, previousDeviceId, matchingToken.isRememberMe());
 
             System.out.println("REFRESH TOKEN CREATED AT: " + new Date());
-
-            return mapResponse;
+            return helperResponseMap(user, newAccessToken, newRefreshToken, previousDeviceId, matchingToken.isRememberMe());
         }catch (JwtException e){
             throw new InvalidJwtTokenException("Invalid refresh token.");
         }
     }
 
+
+
+
+
+
+
+
+
+    /// test endpoint
+
+
+    public String getProfile(String token){
+        String userEmail = jwtGeneratorService.getUserEmail(token);
+
+        User user =  userRepositoryService.getUserByEmail(userEmail);
+
+        String userFullName = user.getFirstName() + user.getLastName();
+
+        return userFullName;
+    }
 }
 
 

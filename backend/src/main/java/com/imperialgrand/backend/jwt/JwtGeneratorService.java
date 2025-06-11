@@ -1,10 +1,9 @@
 package com.imperialgrand.backend.jwt;
 
 import com.imperialgrand.backend.jwt.exception.InvalidJwtTokenException;
-import com.imperialgrand.backend.jwt.model.JwtToken;
+import com.imperialgrand.backend.jwt.model.JwtExpiration;
 import com.imperialgrand.backend.jwt.repository.JwtTokenRepository;
 import com.imperialgrand.backend.user.exception.EmailNotFoundException;
-import com.imperialgrand.backend.user.exception.EmailNotVerifiedException;
 import com.imperialgrand.backend.user.model.User;
 import com.imperialgrand.backend.user.repository.UserRepository;
 import io.jsonwebtoken.Claims;
@@ -23,14 +22,23 @@ import java.util.logging.Logger;
 
 @Service
 @RequiredArgsConstructor
-public class JwtService {
+public class JwtGeneratorService {
 
     private final UserRepository userRepository;
     @Value("${jwt.secret}")
     private String secretKey;
     private final JwtTokenRepository jwtTokenRepository;
     private final UserDetailsService userDetailsService;
-    private final Logger logger = Logger.getLogger(JwtService.class.getName());
+    private final Logger logger = Logger.getLogger(JwtGeneratorService.class.getName());
+
+    public String generateRefreshToken(User user, boolean rememberMe){
+        return rememberMe ? generateToken(user, JwtExpiration.REFRESH_TOKEN_REMEMBER.getExpirationMillis(), "refresh-token")
+                          : generateToken(user, JwtExpiration.REFRESH_TOKEN_DEFAULT.getExpirationMillis(), "refresh-token");
+    }
+
+    public String generateAccessToken(User user){
+        return generateToken(user, JwtExpiration.ACCESS_TOKEN.getExpirationMillis(), "access-token");
+    }
 
     public String generateToken(User user, long expirationMillis, String tokenType) {
         Map<String, Object> claims = new HashMap<>();
@@ -89,43 +97,6 @@ public class JwtService {
 
 
 
-
-
-    public UserDetails validateAndLoadUserFromToken(String token) {
-        UserDetails userDetails = null;
-
-        try{
-            // fetch the token to see if it is in the db
-            Optional<JwtToken> tokenDb = jwtTokenRepository.findByToken(token);
-
-            // to check if token is in the db
-            if(!tokenDb.isPresent()){
-                throw new InvalidJwtTokenException("Invalid JWT token");
-            }
-
-            // to check if token is revoked
-            if(tokenDb.get().isRevoked()){
-                throw new InvalidJwtTokenException("Your session has been revoked. Please log in again.");
-            }
-
-            // to check if token is not expired
-            if(isTokenExpired(token)){
-                throw new InvalidJwtTokenException("Your session has expired. Please log in again.");
-            }
-
-            String userEmail = getUserEmail(token);
-
-            // to check if the email from token is in the db then return in filter
-            userDetails = userDetailsService.loadUserByUsername(userEmail);
-
-        }catch (JwtException e){
-            throw new InvalidJwtTokenException(e.getMessage());
-        }
-
-
-
-        return userDetails;
-    }
 
     private boolean isTokenExpired(String token) {
         Claims claims = extractAllClaims(token);

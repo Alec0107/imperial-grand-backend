@@ -1,12 +1,10 @@
 package com.imperialgrand.backend.filter;
 
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.imperialgrand.backend.jwt.exception.InvalidJwtTokenException;
-import com.imperialgrand.backend.jwt.JwtService;
+import com.imperialgrand.backend.jwt.JwtGeneratorService;
 import com.imperialgrand.backend.user.exception.EmailNotFoundException;
-import com.imperialgrand.backend.user.exception.EmailNotVerifiedException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.Cookie;
@@ -29,7 +27,7 @@ import java.util.logging.Logger;
 @RequiredArgsConstructor
 public class JWTAuthenticationFilter extends OncePerRequestFilter {
 
-    private final JwtService jwtService;
+    private final JwtGeneratorService jwtService;
     private final Logger logger = Logger.getLogger(JWTAuthenticationFilter.class.getName());
 
     @Override

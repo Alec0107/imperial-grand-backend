@@ -10,5 +10,9 @@ import java.util.Optional;
 public interface JwtTokenRepository extends JpaRepository<JwtToken, Long> {
     @Query("SELECT t FROM JwtToken t WHERE t.user.userId = :userId AND t.revoked = false AND t.expired = false")
     Optional<JwtToken> findByUserAndRevokedFalseAndExpiredFalse(@Param("userId") int userId);
+
     Optional<JwtToken> findByToken(String token);
+
+    @Query("SELECT t FROM JwtToken t WHERE t.user.userId = :userId AND t.deviceId = :deviceId AND t.revoked = false AND t.expired = false")
+    Optional<JwtToken> findJwtTokenByDeviceIdAndUserId(@Param("userId") int userId, @Param("deviceId") String deviceId);
 }

@@ -9,6 +9,7 @@ import com.imperialgrand.backend.common.response.ApiResponse;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.coyote.Response;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
@@ -16,12 +17,14 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.view.RedirectView;
 
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.logging.Logger;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/v1/auth")
 @RequiredArgsConstructor
@@ -49,30 +52,41 @@ public class AuthController {
 
 
     @PostMapping("/login")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> login(@RequestBody LoginRequest loginRequest) {
-        int accessMaxAge = 1 * 60; // 3 minutes for access token
-        int refreshmaxAge = loginRequest.isRememberMe() ? 5 * 60 : 3 * 60;
+    public ResponseEntity<ApiResponse<Map<String, Object>>> login(@RequestBody LoginRequest loginRequest, HttpServletRequest request) {
+        Duration accessMaxAge = Duration.ofMinutes(1); // 3 minutes for access token
+        Duration refreshMaxAge = loginRequest.isRememberMe() ? Duration.ofMinutes(3) : Duration.ofMinutes(2);
         Map<String, Object> mapBody = new HashMap<>();
-        Map<String, Object> mapResponse = authService.login(loginRequest);
+
+        String deviceIdHeader = request.getHeader("x-device-id");
+
+        Map<String, Object> mapResponse = authService.login(loginRequest, deviceIdHeader);
         String accessToken = (String) mapResponse.get("access_token");
         String refreshToken = (String) mapResponse.get("refresh_token");
+        String deviceId = (String) mapResponse.get("device_id");
 
         ResponseCookie refresh = ResponseCookie.from("refresh-token", refreshToken)
-                .httpOnly(false)
+                .httpOnly(true)
                 .secure(false)
                 .sameSite("Lax")
                 .path("/")
-                .maxAge(refreshmaxAge)
+                .maxAge(refreshMaxAge)
                 .build();
 
         ResponseCookie access = ResponseCookie.from("access-token", accessToken)
-                .httpOnly(false)
+                .httpOnly(true)
                 .secure(false)
                 .sameSite("Lax")
                 .path("/")
                 .maxAge(accessMaxAge)
                 .build();
 
+        ResponseCookie device = ResponseCookie.from("device-id", deviceId)
+                .httpOnly(false)
+                .secure(false)
+                .sameSite("Lax")
+                .path("/")
+                .maxAge(refreshMaxAge)
+                .build();
 
 
         mapBody.put("username", mapResponse.get("username"));
@@ -81,41 +95,49 @@ public class AuthController {
         ApiResponse<Map<String, Object>> apiResponse = new ApiResponse<>(mapBody, "Login Successful!");
 
         return ResponseEntity.ok()
-                .header(HttpHeaders.SET_COOKIE, refresh.toString(), access.toString())
+                .header(HttpHeaders.SET_COOKIE, refresh.toString(), access.toString(), device.toString())
                 .body(apiResponse);
+    }
+
+
+    private String getRefreshCookieToken(HttpServletRequest request) {
+        String incomingRefreshToken = null;
+        Cookie[] cookies = request.getCookies();
+        if (cookies != null) {
+            for (Cookie cookie : cookies) {
+                if (cookie.getName().equals("refresh-token")) {
+                    incomingRefreshToken = cookie.getValue();
+                }
+                break;
+            }
+        }
+        return incomingRefreshToken;
     }
 
 
     @PostMapping("/refresh-token")
     public ResponseEntity<ApiResponse<Map<String, Object>>> refresh(HttpServletRequest request) {
+        Map<String, Object> mapBody = new HashMap<>();
         /**
          *  TODO:
          *       - add refresh rotation. If access token (AT) expired
          *       use the refresh token (RT) to issue a new AT and RT
          *
          * **/
+        // get the cookie refresh token and device id string form header
+        String deviceId = request.getHeader("x-device-id");
+        String incomingRefreshToken = getRefreshCookieToken(request);
 
-        Cookie[] cookies = request.getCookies();
-        String incomingRefreshToken = null;
-
-        if(cookies != null) {
-            for (Cookie cookie : cookies) {
-                if(cookie.getName().equals("refresh-token")) {
-                    incomingRefreshToken = cookie.getValue();
-                    break;
-                }
-            }
-        }
-
-        Map<String, Object> mapBody = new HashMap<>();
-        Map<String, Object> mapResponse = authService.generateNewJwtToken(incomingRefreshToken);
+        Map<String, Object> mapResponse = authService.generateNewJwtToken(incomingRefreshToken, deviceId);
         String newAccessToken = (String) mapResponse.get("access_token");
         String newRefreshToken = (String) mapResponse.get("refresh_token");
         boolean rememberMe = (boolean) mapResponse.get("remember_me");
+
         int accessMaxAge =  1 * 60; // 3 minutes for access token
         int refreshMaxAge = rememberMe ? 5 * 60 : 3 * 60;
+
         ResponseCookie newRefresh = ResponseCookie.from("refresh-token", newRefreshToken)
-                .httpOnly(false)
+                .httpOnly(true)
                 .secure(false)
                 .sameSite("Lax")
                 .path("/")
@@ -123,12 +145,21 @@ public class AuthController {
                 .build();
 
         ResponseCookie newAccess = ResponseCookie.from("access-token", newAccessToken)
-                .httpOnly(false)
+                .httpOnly(true)
                 .secure(false)
                 .sameSite("Lax")
                 .path("/")
                 .maxAge(accessMaxAge)
                 .build();
+
+        ResponseCookie device = ResponseCookie.from("device-id", deviceId)
+                .httpOnly(false)
+                .secure(false)
+                .sameSite("Lax")
+                .path("/")
+                .maxAge(refreshMaxAge)
+                .build();
+
 
         mapBody.put("username", mapResponse.get("username"));
         mapBody.put("role", mapResponse.get("role"));
@@ -136,7 +167,7 @@ public class AuthController {
         ApiResponse<Map<String, Object>> apiResponse = new ApiResponse<>(mapBody, "Refresh Successful!");
 
         return ResponseEntity.ok()
-                .header(HttpHeaders.SET_COOKIE, newRefresh.toString(), newAccess.toString())
+                .header(HttpHeaders.SET_COOKIE, newRefresh.toString(), newAccess.toString(), device.toString())
                 .body(apiResponse);
     }
 
@@ -209,6 +240,7 @@ public class AuthController {
          *
          * **/
     }
+}
 
 
 
@@ -235,4 +267,4 @@ public class AuthController {
 //    }
 
 
-}
+
