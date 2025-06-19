@@ -192,10 +192,10 @@ public class AuthService {
 
 
         if(incomingDeviceId != null) {
-            logger.info("DEVICE ID: " + deviceId);
+            logger.info("DEVICE ID: " + incomingDeviceId);
             JwtToken previousRefreshToken = jwtRepositoryService.getTokenByUserIdAndDeviceId(user.getUserId(), incomingDeviceId);
+            if(previousRefreshToken.getExpiresAt().isBefore(LocalDateTime.now())) previousRefreshToken.setExpired(true);
             previousRefreshToken.setRevoked(true);
-            previousRefreshToken.setExpired(true);
             jwtRepositoryService.saveOldToken(previousRefreshToken);
             deviceId = incomingDeviceId;
         }else{
@@ -213,9 +213,6 @@ public class AuthService {
             // generate refresh and access token
             refreshToken = jwtGeneratorService.generateRefreshToken(user, rememberMe);
             accessToken  = jwtGeneratorService.generateAccessToken(user);
-
-            // generate device-id
-            deviceId = UUID.randomUUID().toString();
 
             // hash the refresh token
             String salt = HashTokenUtils.generateSalt();
@@ -553,6 +550,11 @@ public class AuthService {
              * **/
 
             JwtToken matchingToken = jwtRepositoryService.getTokenByUserIdAndDeviceId(user.getUserId(), deviceId); // fetch matching token from db
+
+            if(matchingToken.getExpiresAt().isBefore(LocalDateTime.now())){
+                matchingToken.setExpired(true);
+            }
+
             String salt = matchingToken.getSalt();
             String hashedRefreshTokenDb = matchingToken.getToken();
             String incomingHashedRefreshToken = HashTokenUtils.hashRefreshToken(incomingRefreshToken, salt);
@@ -562,7 +564,6 @@ public class AuthService {
             }
 
             // revoke the matched token
-            matchingToken.setExpired(true);
             matchingToken.setRevoked(true);
             jwtRepositoryService.saveOldToken(matchingToken);
 

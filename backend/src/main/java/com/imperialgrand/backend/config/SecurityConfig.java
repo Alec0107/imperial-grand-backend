@@ -39,7 +39,7 @@ public class SecurityConfig {
             http
                 .cors(cors -> cors.configurationSource(corsConfiguration()))
                 .csrf(csrf -> csrf.disable())
-                .authorizeHttpRequests(auth -> auth.requestMatchers("/api/v1/auth/register","/api/v1/auth/verify","/api/v1/auth/login","/api/v1/auth/resend-verification","/api/v1/auth/inbox-resend-verification","/api/v1/test/publicHello", "/api/v1/auth/detailsTest", "/api/v1/auth/forgot-password", "/api/v1/auth/reset-password", "/api/v1/auth/reset-password/validate", "/api/v1/auth/refresh-token").permitAll()
+                .authorizeHttpRequests(auth -> auth.requestMatchers("/api/v1/auth/register","/api/v1/auth/verify","/api/v1/auth/login","/api/v1/auth/resend-verification","/api/v1/auth/inbox-resend-verification","/api/v1/test/publicHello", "/api/v1/auth/detailsTest", "/api/v1/auth/forgot-password", "/api/v1/auth/reset-password", "/api/v1/auth/reset-password/validate", "/api/v1/auth/refresh-token", "/api/v1/contact").permitAll()
                                                    .anyRequest().authenticated())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authenticationProvider(authenticationProvider)

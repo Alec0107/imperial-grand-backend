@@ -10,6 +10,7 @@ import lombok.Data;
 import org.springframework.stereotype.Repository;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Optional;
 
@@ -29,8 +30,11 @@ public class JwtRepositoryService {
         tokenRepository.save(token);
     }
 
-    public void saveNewToken(String jwtToken, String salt, User userObject, String deviceId, boolean RememberMe) {
+    public void saveNewToken(String jwtToken, String salt, User userObject, String deviceId, boolean rememberMe) {
         // make an instance of jwtObject
+
+        LocalDateTime expiryDate = rememberMe ? LocalDateTime.now().plus(Duration.ofMinutes(3)) : LocalDateTime.now().plus(Duration.ofMinutes(2));
+
         JwtToken jwtTokenObject = JwtToken.builder()
                 .token(jwtToken)
                 .tokenType(TokenType.REFRESH_TOKEN.toString())
@@ -38,8 +42,9 @@ public class JwtRepositoryService {
                 .deviceId(deviceId)
                 .expired(false)
                 .revoked(false)
-                .rememberMe(RememberMe)
+                .rememberMe(rememberMe)
                 .issuedAt(LocalDateTime.now())
+                .expiresAt(expiryDate)
                 .user(userObject)
                 .build();
         // save jwt object in db

@@ -7,6 +7,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.springframework.cglib.core.Local;
 
 import java.time.LocalDateTime;
 
@@ -31,6 +32,7 @@ public class JwtToken {
     private boolean revoked;
     private boolean rememberMe;
     private LocalDateTime issuedAt;
+    private LocalDateTime expiresAt;
 
     @ManyToOne
     @JoinColumn(name = "user_id", referencedColumnName = "userId")

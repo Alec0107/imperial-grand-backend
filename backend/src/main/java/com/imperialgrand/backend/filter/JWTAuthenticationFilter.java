@@ -40,7 +40,7 @@ public class JWTAuthenticationFilter extends OncePerRequestFilter {
                 || path.equals("/api/v1/auth/register") || path.equals("/api/v1/auth/verify")
                 || path.equals("/api/v1/auth/resend-verification") || path.equals("/api/v1/auth/inbox-resend-verification") || path.equals("/api/v1/auth/verify-email")
                 || path.equals("/api/v1/auth/forgot-password") || path.equals("/api/v1/auth/reset-password") || path.equals("/api/v1/auth/reset-password/")
-                || path.equals("/api/v1/auth/reset-password/validate")){
+                || path.equals("/api/v1/auth/reset-password/validate") || path.equals(("/api/v1/contact"))){
             logger.info("Endpoints skipped");
             filterChain.doFilter(request, response);
             return;
