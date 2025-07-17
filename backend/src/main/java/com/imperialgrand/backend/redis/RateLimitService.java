@@ -1,7 +1,5 @@
-package com.imperialgrand.backend.rate_limiter;
+package com.imperialgrand.backend.redis;
 
-import lombok.Builder;
-import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -13,8 +11,11 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class RateLimitService {
 
-    private final StringRedisTemplate redisTemplate;
+    /**
+     *  RATE LIMITER TYPE: SLIDING WINDOW LOG
+     * **/
 
+    private final StringRedisTemplate redisTemplate;
 
     public boolean isRequestAllowed(String ip){
         String key = ip;
@@ -32,7 +33,6 @@ public class RateLimitService {
             System.out.println("Blocked");
             return false;
         }
-
 
         // 3. save new request timestamp
         String uuid = UUID.randomUUID().toString();

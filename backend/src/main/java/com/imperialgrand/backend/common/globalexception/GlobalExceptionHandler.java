@@ -7,6 +7,8 @@ import com.imperialgrand.backend.jwt.exception.InvalidJwtTokenException;
 import com.imperialgrand.backend.jwt.exception.MissingRefreshTokenException;
 import com.imperialgrand.backend.jwt.exception.RefreshTokenExpiredException;
 import com.imperialgrand.backend.jwt.exception.WrongTypeTokenException;
+import com.imperialgrand.backend.reservation.exception.NoAvailableTableException;
+import com.imperialgrand.backend.reservation.exception.ReservationLockNotFoundException;
 import com.imperialgrand.backend.resetpassword.exception.InvalidResetPasswordTokenException;
 import com.imperialgrand.backend.resetpassword.exception.TokenExpiredException;
 import com.imperialgrand.backend.common.response.ErrorResponse;
@@ -21,6 +23,8 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.servlet.view.RedirectView;
 
+import java.time.LocalDateTime;
+
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
@@ -29,6 +33,7 @@ public class GlobalExceptionHandler {
     private static final String UNAUTHORIZED = "UNAUTHORIZED";
     private static final String NOT_FOUND= "NOT_FOUND";
     private static final String TOO_MANY_REQUEST = "Too many requests";
+
 
 
     @ExceptionHandler(EmailAlreadyUsedException.class)
@@ -190,6 +195,21 @@ public class GlobalExceptionHandler {
                 "INVALID_JWT_TOKEN",
                 HttpStatus.BAD_REQUEST.value());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+    }
+
+    @ExceptionHandler(NoAvailableTableException.class)
+    public ResponseEntity<ErrorResponse> handleNoAvailableTableException(NoAvailableTableException ex) {
+        ErrorResponse errorResponse = new ErrorResponse(ex.getMessage(),
+                "NO_TABLE_AVAILBALE",
+                HttpStatus.NOT_FOUND.value());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(errorResponse);
+    }
+    @ExceptionHandler(ReservationLockNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleReservationLockNotFoundException(ReservationLockNotFoundException ex) {
+        ErrorResponse errorResponse = new ErrorResponse(ex.getMessage(),
+                "RESERVATION_LOCK_NOT_FOUND",
+                HttpStatus.NOT_FOUND.value());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(errorResponse);
     }
 
 }

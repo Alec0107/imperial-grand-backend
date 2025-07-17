@@ -194,7 +194,6 @@ public class AuthService {
         if(incomingDeviceId != null) {
             logger.info("DEVICE ID: " + incomingDeviceId);
             JwtToken previousRefreshToken = jwtRepositoryService.getTokenByUserIdAndDeviceId(user.getUserId(), incomingDeviceId);
-            if(previousRefreshToken.getExpiresAt().isBefore(LocalDateTime.now())) previousRefreshToken.setExpired(true);
             previousRefreshToken.setRevoked(true);
             jwtRepositoryService.saveOldToken(previousRefreshToken);
             deviceId = incomingDeviceId;
@@ -222,6 +221,7 @@ public class AuthService {
            jwtRepositoryService.saveNewToken(hashedRefreshToken, salt, user, deviceId, loginRequest.isRememberMe());
 
             System.out.println("LOGIN TIME: " + new Date());
+            System.out.println("LOGIN: (Refresh-token): " + refreshToken);
             return helperResponseMap(user, accessToken, refreshToken, deviceId, loginRequest.isRememberMe());
 
         }catch (BadCredentialsException ex){
@@ -257,7 +257,6 @@ public class AuthService {
 
        JwtToken jwtTokenObject = jwtTokenOptional.get();
        jwtTokenObject.setRevoked(true);
-       jwtTokenObject.setExpired(true);
        jwtTokenRepository.save(jwtTokenObject);
 
        return new ApiResponse<>("" ,"Logout successful.");
@@ -528,20 +527,29 @@ public class AuthService {
             if(incomingRefreshToken == null || incomingRefreshToken.isEmpty()) {
                 throw new MissingRefreshTokenException("Refresh token is empty");
             }
+
             // check if token is refresh and is not tampered
-            Claims claims = jwtGeneratorService.extractAllClaims(incomingRefreshToken); // might throw an exception
+            Claims claims = jwtGeneratorService.extractAllClaims(incomingRefreshToken);
             if(!claims.get("type").equals("refresh-token")){
                 throw new WrongTypeTokenException("Wrong type of jwt token.");
             }
 
-            // check if its expired
-            if(claims.getExpiration().before(new Date())){
-                throw new RefreshTokenExpiredException("Refresh token is expired. Please login.");
-            }
-
-            // fetch the user via email
+            // fetch the user and matching token from DB early
             String userEmail = claims.getSubject();
             user = userRepositoryService.getUserByEmail(userEmail);
+            JwtToken matchingToken = jwtRepositoryService.getTokenByUserIdAndDeviceId(user.getUserId(), deviceId);
+
+            // DB expiration check should come before claims check
+            if (matchingToken.getExpiresAt().isBefore(LocalDateTime.now())) {
+//                matchingToken.setExpired(true);
+//                jwtRepositoryService.saveOldToken(matchingToken); // Save change if you want
+                throw new RefreshTokenExpiredException("Refresh token has expired (DB check). Please login again.");
+            }
+
+            // Optional: now check JWT claim expiration as secondary (for redundancy/logging)
+            if (claims.getExpiration().before(new Date())) {
+                throw new RefreshTokenExpiredException("Refresh token has expired (JWT claims). Please login again.");
+            }
 
             /**
              * TODO:
@@ -549,11 +557,6 @@ public class AuthService {
              *        jwttoken from db or make it a lists and iterate
              * **/
 
-            JwtToken matchingToken = jwtRepositoryService.getTokenByUserIdAndDeviceId(user.getUserId(), deviceId); // fetch matching token from db
-
-            if(matchingToken.getExpiresAt().isBefore(LocalDateTime.now())){
-                matchingToken.setExpired(true);
-            }
 
             String salt = matchingToken.getSalt();
             String hashedRefreshTokenDb = matchingToken.getToken();
@@ -580,6 +583,7 @@ public class AuthService {
             jwtRepositoryService.saveNewToken(newHashedRefreshToken, newSalt, user, previousDeviceId, matchingToken.isRememberMe());
 
             System.out.println("REFRESH TOKEN CREATED AT: " + new Date());
+            System.out.println("REFRESH NEW: (Refresh-token): " + newRefreshToken);
             return helperResponseMap(user, newAccessToken, newRefreshToken, previousDeviceId, matchingToken.isRememberMe());
         }catch (JwtException e){
             throw new InvalidJwtTokenException("Invalid refresh token.");

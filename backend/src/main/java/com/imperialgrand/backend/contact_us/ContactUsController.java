@@ -2,8 +2,6 @@ package com.imperialgrand.backend.contact_us;
 
 
 import com.imperialgrand.backend.contact_us.dto.ContactUs;
-import com.imperialgrand.backend.contact_us.repository.ContactUsRepository;
-import com.imperialgrand.backend.rate_limiter.RateLimitService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;

@@ -18,10 +18,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.view.RedirectView;
 
 import java.time.Duration;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
+import java.util.*;
 import java.util.logging.Logger;
 
 @Slf4j
@@ -58,6 +55,7 @@ public class AuthController {
         Map<String, Object> mapBody = new HashMap<>();
 
         String deviceIdHeader = request.getHeader("x-device-id");
+        logger.info("DEVICE ID: " + deviceIdHeader);
 
         Map<String, Object> mapResponse = authService.login(loginRequest, deviceIdHeader);
         String accessToken = (String) mapResponse.get("access_token");
@@ -107,8 +105,9 @@ public class AuthController {
             for (Cookie cookie : cookies) {
                 if (cookie.getName().equals("refresh-token")) {
                     incomingRefreshToken = cookie.getValue();
+                    System.out.println("REFRESH TOKEN T: " + cookie.getValue());
+                    break;
                 }
-                break;
             }
         }
         return incomingRefreshToken;
@@ -117,6 +116,12 @@ public class AuthController {
 
     @PostMapping("/refresh-token")
     public ResponseEntity<ApiResponse<Map<String, Object>>> refresh(HttpServletRequest request) {
+
+        logger.info("Refresh endpoint hit.");
+        logger.info("Device-ID: " + request.getHeader("x-device-id"));
+        logger.info("Cookies: " + Arrays.toString(request.getCookies()));
+
+
         Map<String, Object> mapBody = new HashMap<>();
         /**
          *  TODO:
@@ -131,7 +136,10 @@ public class AuthController {
         Map<String, Object> mapResponse = authService.generateNewJwtToken(incomingRefreshToken, deviceId);
         String newAccessToken = (String) mapResponse.get("access_token");
         String newRefreshToken = (String) mapResponse.get("refresh_token");
+        String deviceIdTest = (String)mapResponse.get("device_id");
         boolean rememberMe = (boolean) mapResponse.get("remember_me");
+
+        System.out.println("NEW REFRESH TOKEN: " + newRefreshToken);
 
         int accessMaxAge =  1 * 60; // 3 minutes for access token
         int refreshMaxAge = rememberMe ? 5 * 60 : 3 * 60;
@@ -152,7 +160,7 @@ public class AuthController {
                 .maxAge(accessMaxAge)
                 .build();
 
-        ResponseCookie device = ResponseCookie.from("device-id", deviceId)
+        ResponseCookie device = ResponseCookie.from("device-id", deviceIdTest)
                 .httpOnly(false)
                 .secure(false)
                 .sameSite("Lax")

@@ -74,7 +74,7 @@ public class JwtGeneratorService {
 
             logger.info("Access token validated for: {" + userEmail+ "}");
 
-            // returnm the user details object
+            // return the user details object
             return userDetails;
 
         }catch (JwtException e){

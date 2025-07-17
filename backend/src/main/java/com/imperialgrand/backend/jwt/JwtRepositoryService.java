@@ -40,7 +40,6 @@ public class JwtRepositoryService {
                 .tokenType(TokenType.REFRESH_TOKEN.toString())
                 .salt(salt)
                 .deviceId(deviceId)
-                .expired(false)
                 .revoked(false)
                 .rememberMe(rememberMe)
                 .issuedAt(LocalDateTime.now())

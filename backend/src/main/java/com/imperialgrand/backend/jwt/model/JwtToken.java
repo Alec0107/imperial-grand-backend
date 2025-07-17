@@ -28,7 +28,6 @@ public class JwtToken {
     private String tokenType;
     private String salt;
     private String deviceId;
-    private boolean expired;
     private boolean revoked;
     private boolean rememberMe;
     private LocalDateTime issuedAt;

@@ -65,7 +65,7 @@ public class User implements UserDetails {
 
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
-        return List.of(new SimpleGrantedAuthority(role.name()));
+        return List.of(new SimpleGrantedAuthority("ROLE_" + role.name())); // returns "ROLE_USER"
     }
 
     @Override
@@ -88,4 +88,25 @@ public class User implements UserDetails {
         return true;
     }
 
+
+    @Override
+    public String toString() {
+        return "User{" +
+                "userId=" + userId +
+                ", firstName='" + firstName + '\'' +
+                ", lastName='" + lastName + '\'' +
+                ", email='" + email + '\'' +
+                ", password='" + password + '\'' +
+                ", phoneNumber='" + phoneNumber + '\'' +
+                ", dob=" + dob +
+                ", role=" + role +
+                ", enabled=" + enabled +
+                ", createdAt=" + createdAt +
+                ", updatedAt=" + updatedAt +
+                ", emailVerificationTokens=" + emailVerificationTokens +
+                ", jwtToken=" + jwtToken +
+                ", resetPasswordTokens=" + resetPasswordTokens +
+                '}';
+    }
 }
+
